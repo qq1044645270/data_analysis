@@ -1,0 +1,29 @@
+##  第六章源代码
+
+# 读入CSV文件
+ad.data <- read.csv("./ad_result.csv", header = T, stringsAsFactors = F)
+ad.data
+
+# 生成TVCM广告费用和Install数据的散点图
+library(ggplot2)
+library(scales)
+
+ggplot(ad.data, aes(x = tvcm, y = install)) + geom_point() + 
+xlab("电视广告费") + ylab("新用户数") + 
+scale_x_continuous(label = comma) +
+scale_y_continuous(label = comma)
+
+# 生成杂志广告费和新用户数的散点图
+ggplot(ad.data, aes(x = magazine, y = install)) + geom_point() + 
+xlab("杂志广告费") + ylab("新用户数") + 
+scale_x_continuous(label = comma) + 
+scale_y_continuous(label = comma)
+
+# 进行回归分析
+fit <- lm(install ~ ., data = ad.data[, c("install", "tvcm", "magazine")])
+fit
+
+# 对回归分析结果的解释
+summary(fit)
+
+

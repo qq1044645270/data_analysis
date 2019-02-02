@@ -1,0 +1,170 @@
+##  第八章源代码
+
+# 生成用于读入数据的函数
+library(plyr)
+library(foreach)
+readTsvDates <- function(base.dir, app.name, date.from, date.to) {
+date.from <- as.Date(date.from)
+date.to <- as.Date(date.to)
+dates <- seq.Date(date.from, date.to, by = "day")
+x <- ldply(foreach(day = dates, combine = rbind) %do% {
+read.csv(sprintf("%s/%s/%s/data.tsv", base.dir, app.name, day),
+header = T,
+sep = "\t", stringsAsFactors = F)
+})
+x
+}
+
+# 读入DAU数据的函数
+readDau <- function(app.name, date.from, date.to = date.from) {
+data <- readTsvDates("sample-data/section8/daily/dau", app.name,
+date.from, date.to)
+data
+}
+# 读入DPU数据的函数
+readDpu <- function(app.name, date.from, date.to = date.from) {
+data <- readTsvDates("sample-data/section8/daily/dpu", app.name,
+date.from, date.to)
+data
+}
+# 读入行为数据的函数
+readActionDaily <- function(app.name, date.from, date.to = date.from) {
+data <- readTsvDates("sample-data/section8/daily/action", app.name,
+date.from, date.to)
+data
+}
+
+# 读入数据
+
+# DAU
+dau <- readDau("game-01", "2013-05-01", "2013-10-31")
+head(dau)
+# DPU
+dpu <- readDpu("game-01", "2013-05-01", "2013-10-31")
+head(dpu)
+# Action
+user.action <- readActionDaily("game-01", "2013-10-31", "2013-10-31")
+head(user.action)
+
+# 将DAU和DPU合并
+
+# 合并消费额数据
+dau2 <- merge(dau, dpu[, c("log_date", "user_id", "payment"), ],
+by = c("log_date", "user_id"), all.x = T)
+# 添加消费额标志位
+dau2$is.payment <- ifelse(is.na(dau2$payment), 0, 1)
+head(dau2)
+# 将无消费记录的消费额设为0
+dau2$payment <- ifelse(is.na(dau2$payment), 0, dau2$payment)
+head(dau2)
+
+# 按月统计
+
+# 增加一列表示月份
+dau2$log_month <- substr(dau2$log_date, 1, 7)
+# 按月统计
+mau <- ddply(dau2, .(log_month, user_id), summarize, payment
+= sum(payment),
+access_days = length(log_date))
+head(mau)
+
+# 确定排名的范围
+library(ykmeans)
+library(ggplot2)
+library(scales)
+# A47为排行榜得分
+user.action2 <- ykmeans(user.action, "A47", "A47", 3)
+# 每个类的人数
+table(user.action2$cluster)
+
+# 排行榜得分的分布
+ggplot(arrange(user.action2, desc(A47)),
+aes(x = 1:length(user_id), y = A47,
+col = as.factor(cluster), shape = as.factor(cluster))) +
+geom_line() +
+xlab("user") +
+ylab("Ranking point") +
+scale_y_continuous(label = comma) +
+ggtitle("Ranking Point") +
+theme(legend.position = "none")
+
+# 限定排名靠前的用户
+user.action.h <- user.action2[user.action2$cluster >= 2,
+names(user.action)]
+
+# 进行主成分分析
+
+# 用于机器学习的库
+# 利用库中包含的函数进行数据的前期处理
+library(caret)
+user.action.f <- user.action.h[, -c(1:4)]
+row.names(user.action.f) <- user.action.h$user_id
+head(user.action.f)
+# 删除那些信息量小的变量
+nzv <- nearZeroVar(user.action.f)
+user.action.f.filterd <- user.action.f[,-nzv]
+# 删除那些相关性高的变量
+user.action.cor <- cor(user.action.f.filterd)
+highly.cor.f <- findCorrelation(user.action.cor,cutoff=.7)
+user.action.f.filterd <- user.action.f.filterd[,-highly.cor.f]
+# 进行主成分分析
+# pca
+user.action.pca.base <- prcomp(user.action.f.filterd, scale = T)
+user.action.pca.base$rotation
+
+# 进行聚类
+user.action.pca <- data.frame(user.action.pca.base$x)
+keys <- names(user.action.pca)
+user.action.km <- ykmeans(user.action.pca, keys, "PC1", 3:6)
+table(user.action.km$cluster)
+
+ggplot(user.action.km,
+aes(x=PC1,y=PC2,col=as.factor(cluster), shape=as.factor(cluster))) +
+geom_point()
+
+# 计算每个类的平均值
+user.action.f.filterd$cluster <- user.action.km$cluster
+user.action.f.center <-
+ldply(lapply(sort(unique(user.action.f.filterd$cluster)),
+function(i) {
+x <- user.action.f.filterd[user.action.f.filterd$cluster == i,
+-ncol(user.action.f.filterd)]
+apply(x, 2, function(d) mean(d))
+}))
+
+# 生成用于雷达图的数据
+library(fmsb)
+# 对雷达图所需的数据进行整理的函数
+createRadarChartDataFrame <- function(df) {
+df <- data.frame(df)
+dfmax <- apply(df, 2, max) + 1
+dfmin <- apply(df, 2, min) - 1
+as.data.frame(rbind(dfmax, dfmin, df))
+}
+# 排除相关性较高的变量
+df <- user.action.f.center[, -(ncol(user.action.f.center) - 1)]
+df.cor <- cor(df)
+df.highly.cor <- findCorrelation(df.cor, cutoff = 0.91)
+# 手动调整使得数据易于解释
+df.filterd <- df[, -df.highly.cor]
+# 生成雷达图所需的数据
+df.filterd <- createRadarChartDataFrame(scale(df.filterd))
+names(df.filterd)
+
+names(df.filterd) <- c("级别", "救援他人的次数", "被救援的次数", "对战敌方首领的次数",
+"参与战斗的次数", "参与游戏的次数")
+
+radarchart(df.filterd, seg = 5, plty = 1:5, plwd = 4, pcol = rainbow(5))
+legend("topright", legend = 1:5, col = rainbow(5), lty = 1:5)
+
+# 计算每个类的KPI
+
+user.action.f.filterd$user_id <-
+as.numeric(rownames(user.action.f.filterd))
+user.action.kpi <- merge(user.action.f.filterd, mau,by = "user_id")
+ddply(user.action.kpi, .(cluster), summarize,
+arpu = round(mean(payment)),
+access_days = round(mean(access_days)))
+
+
+
